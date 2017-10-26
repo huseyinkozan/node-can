@@ -76,7 +76,7 @@ static u_int64_t _getvalue(u_int8_t * data,
             val |= ((data[bitNr >> 3] >> (7-(bitNr & 0x07))) & 1) << i;
         }
     }
-    
+
     if (val != o) {
         fprintf(stderr, "getvalue: got %lu, expected %lu\n", val, o);
     }
@@ -88,8 +88,8 @@ static u_int64_t _getvalue(u_int8_t * data,
 // Decode signal according description
 // arg[0] - Data array
 // arg[1] - offset zero indexed
-// arg[3] - bitLength one indexed
-// arg[4] - endianess
+// arg[3] - endianess
+// arg[4] - signed flag
 NAN_METHOD(DecodeSignal)
 {
     u_int32_t offset, bitLength;
