@@ -51,7 +51,12 @@ static u_int64_t _getvalue(u_int8_t * data,
         d = be64toh(*((uint64_t *)&data[0]));
     }
 
-    uint64_t m = (1 << length) - 1;
+    uint64_t m;
+    if (length == 64) {
+      m = (uint64_t) UINT64_MAX;
+    } else {
+      m = (1LLU << length) - 1;
+    }
     size_t shift;
     if (byteOrder == ENDIANESS_INTEL) {
         shift = offset;
@@ -100,7 +105,7 @@ NAN_METHOD(DecodeSignal)
     CHECK_CONDITION(info.Length() == 5, "Too few arguments");
     CHECK_CONDITION(info[0]->IsObject(), "Invalid argument");
 
-    Local<Object> jsData = info[0]->ToObject();
+    Local<Object> jsData = Nan::To<Object>(info[0]).ToLocalChecked();
 
     CHECK_CONDITION(Buffer::HasInstance(jsData), "Invalid argument");
     CHECK_CONDITION(info[1]->IsUint32(), "Invalid offset");
@@ -108,8 +113,9 @@ NAN_METHOD(DecodeSignal)
     CHECK_CONDITION(info[3]->IsBoolean(), "Invalid endianess");
     CHECK_CONDITION(info[4]->IsBoolean(), "Invalid signed flag");
 
-    offset    = info[1]->ToUint32()->Uint32Value();
-    bitLength = info[2]->ToUint32()->Uint32Value();
+    v8::Local<v8::Context> context = info.GetIsolate()->GetCurrentContext();
+    offset    = info[1]->ToUint32(context).ToLocalChecked()->Value();
+    bitLength = info[2]->ToUint32(context).ToLocalChecked()->Value();
     endianess = info[3]->IsTrue() ? ENDIANESS_INTEL : ENDIANESS_MOTOROLA;
     isSigned  = info[4]->IsTrue() ? true : false;
 
@@ -122,14 +128,18 @@ NAN_METHOD(DecodeSignal)
     uint64_t val = _getvalue(data, offset, bitLength, endianess);
 
     // Value shall be interpreted as signed (2's complement)
-    if (isSigned && val & (1 << (bitLength - 1))) {
+    if (isSigned && val & (1LLU << (bitLength - 1))) {
         int32_t tmp = -1 * (~((UINT64_MAX << bitLength) | val) + 1);
         retval = Nan::New(tmp);
     } else {
         retval = Nan::New((u_int32_t)val);
     }
 
-    info.GetReturnValue().Set(retval);
+    Local<Array> raw_values = Nan::New<v8::Array>(2);
+    Nan::Set(raw_values, 0, retval);
+    Nan::Set(raw_values, 1, Nan::New((u_int32_t) (val >> 32)));
+
+    info.GetReturnValue().Set(raw_values);
 }
 
 void _setvalue(u_int32_t offset, u_int32_t bitLength, ENDIANESS endianess, u_int8_t data[8], u_int64_t raw_value)
@@ -141,7 +151,12 @@ void _setvalue(u_int32_t offset, u_int32_t bitLength, ENDIANESS endianess, u_int
         o = be64toh(*((uint64_t *)&data[0]));
     }
 
-    uint64_t m = ((1 << bitLength) - 1);
+    uint64_t m = 0;
+    if (bitLength == 64) {
+      m = (uint64_t) UINT64_MAX;
+    } else {
+      m = (1LLU << bitLength) - 1;
+    }
     size_t shift;
     if (endianess == ENDIANESS_INTEL) {
         shift = offset;
@@ -149,8 +164,9 @@ void _setvalue(u_int32_t offset, u_int32_t bitLength, ENDIANESS endianess, u_int
         shift = 64 - offset - bitLength;
     }
 
-    o &= ~(m << shift);
-    o |= (raw_value & m) << shift;
+    o &= (uint64_t) ~(m << shift);
+    o |= (uint64_t) (raw_value & m) << shift;
+    /* fprintf(stdout, "raw %llu, output %llu, mask %llu shift %llu", raw_value, o, m, shift); */
 
     if (endianess == ENDIANESS_INTEL) {
         o = htole64(o);
@@ -183,24 +199,23 @@ void _setvalue(u_int32_t offset, u_int32_t bitLength, ENDIANESS endianess, u_int
 
 // Encode signal according description
 // arg[0] - Data array
-// arg[1] - startByte one indexed, One indexed, Left(1)->Right(8)
-// arg[2] - startBit zero indexed, Right(0)->Left(7)
-// arg[3] - bitLength one indexed
-// arg[4] - endianess
-// arg[5] - sign flag
-// arg[6] - value to encode
+// arg[1] - bitOffset
+// arg[2] - bitLength
+// arg[3] - endianess
+// arg[4] - sign flag
+// arg[5] - first 4 bytes value to encode
+// arg[6] - second 4 bytes value to encode
 NAN_METHOD(EncodeSignal)
 {
     u_int32_t offset, bitLength;
     ENDIANESS endianess;
-    bool sign = false;
     u_int8_t data[8];
     u_int64_t raw_value;
 
-    CHECK_CONDITION(info.Length() == 6, "Too few arguments");
+    CHECK_CONDITION(info.Length() >= 6, "Too few arguments");
     CHECK_CONDITION(info[0]->IsObject(), "Invalid argument");
 
-    Local<Object> jsData = info[0]->ToObject();
+    Local<Object> jsData = Nan::To<Object>(info[0]).ToLocalChecked();
 
     CHECK_CONDITION(Buffer::HasInstance(jsData), "Invalid argument");
     CHECK_CONDITION(info[1]->IsUint32(), "Invalid offset");
@@ -209,25 +224,17 @@ NAN_METHOD(EncodeSignal)
     CHECK_CONDITION(info[4]->IsBoolean(), "Invalid sign flag");
     CHECK_CONDITION(info[5]->IsNumber() || info[5]->IsBoolean(), "Invalid value");
 
-    offset = info[1]->ToUint32()->Uint32Value();
-    bitLength = info[2]->ToUint32()->Uint32Value();
+    Local<Context> context = info.GetIsolate()->GetCurrentContext();
+    offset = info[1]->ToUint32(context).ToLocalChecked()->Value();
+    bitLength = info[2]->ToUint32(context).ToLocalChecked()->Value();
     endianess = info[3]->IsTrue() ? ENDIANESS_INTEL : ENDIANESS_MOTOROLA;
-    sign = info[4]->IsTrue() ? true : false;
 
-    if (sign) {
-        int32_t in_val = info[5]->ToNumber()->Int32Value();
-
-        if (in_val < 0) {
-            in_val *= -1; // Make it a positive number
-
-            raw_value = (~in_val) + 1;
-            raw_value &= ~(UINT64_MAX << bitLength); // mask valid bits
-        }
+    raw_value = info[5]->ToNumber(context).ToLocalChecked()->ToUint32(context).ToLocalChecked()->Value();
+    if (info[6]->IsNumber() || info[6]->IsBoolean()) {
+      raw_value += ((u_int64_t) info[6]->ToNumber(context).ToLocalChecked()->ToUint32(context).ToLocalChecked()->Value()) << 32;
     }
 
-    raw_value = info[5]->ToNumber()->Uint32Value();
-
-    size_t maxBytes = std::min<u_int32_t>(Buffer::Length(jsData), sizeof(data));
+    size_t maxBytes = std::min<u_int64_t>(Buffer::Length(jsData), sizeof(data));
 
     // Since call may not have supplied enough bytes we have to make a temp copy
     memcpy(data, Buffer::Data(jsData), maxBytes);

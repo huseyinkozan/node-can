@@ -5,7 +5,7 @@
     "email": "sebastian@sebastianhaas.info"
   },
   "description": "A SocketCAN abstraction layer for NodeJS.",
-  "version": "2.2.0",
+  "version": "2.8.0",
   "license": "MIT",
   "repository": {
     "type": "git",
@@ -13,9 +13,12 @@
   },
   "scripts": {
     "configure": "node-gyp configure",
-    "build": "node-gyp build"
+    "build": "node-gyp build",
+    "test": "mocha"
   },
   "devDependencies": {
+    "mocha": "^7.1.1",
+    "nyc": "^15.0.1",
     "node-gyp": ">=1.0.0"
   },
   "dependencies": {
